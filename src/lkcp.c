@@ -31,8 +31,13 @@
 
 #include "ikcp.h"
 
+#define RECV_BUFFER_LEN 2000
+
 #define check_kcp(L, idx)\
-	*(ikcpcb**)luaL_checkudata(L, idx, "lkcp_methods")
+	*(ikcpcb**)luaL_checkudata(L, idx, "kcp_meta")
+
+#define check_buf(L, idx)\
+	(char*)luaL_checkudata(L, idx, "recv_buffer")
 
 union value {
 	char* str;
@@ -51,7 +56,7 @@ typedef struct _UserInfo {
     UserValue* lst_tail;
 } UserInfo;
 
-UserInfo* userinfo_create(lua_State* L) {
+static UserInfo* userinfo_create(lua_State* L) {
     UserInfo* u = malloc(sizeof(UserInfo));
     memset(u, 0, sizeof(UserInfo));
     u -> lp = L;
@@ -59,7 +64,7 @@ UserInfo* userinfo_create(lua_State* L) {
     return u;
 }
 
-int userinfo_release(UserInfo* u) {
+static int userinfo_release(UserInfo* u) {
     if (u == NULL)
         return 0;
     u -> lp = NULL;
@@ -85,7 +90,7 @@ int userinfo_release(UserInfo* u) {
     return 0;
 }
 
-int userinfo_add_i(UserInfo* u, int32_t i){
+static int userinfo_add_i(UserInfo* u, int32_t i){
     UserValue* uv = malloc(sizeof(UserValue));
     memset(uv, 0, sizeof(UserValue));
     uv -> size = 0;
@@ -103,7 +108,7 @@ int userinfo_add_i(UserInfo* u, int32_t i){
     return 0;
 }
 
-int userinfo_add_str(UserInfo* u, const char* s, uint8_t size){
+static int userinfo_add_str(UserInfo* u, const char* s, uint8_t size){
     UserValue* uv = malloc(sizeof(UserValue));
     memset(uv, 0, sizeof(UserValue));
     uv -> size = size;
@@ -169,6 +174,15 @@ static int kcp_gc(lua_State* L) {
     return 0;
 }
 
+static int recv_buffer_gc(lua_State* L) {
+	char* buf = check_buf(L, 1);
+	if (buf == NULL) {
+        return 0;
+	}
+    buf = NULL;
+    return 0;
+}
+
 static int lkcp_init(lua_State* L) {
 	lua_setfield(L, LUA_REGISTRYINDEX, "kcp_lua_output_callback");
     return 0;
@@ -209,7 +223,7 @@ static int lkcp_create(lua_State* L){
     kcp->output = kcp_output;
 
     *(ikcpcb**)lua_newuserdata(L, sizeof(void*)) = kcp;
-    luaL_getmetatable(L, "lkcp_methods");
+    luaL_getmetatable(L, "kcp_meta");
     lua_setmetatable(L, -2);
     return 1;
 }
@@ -221,9 +235,11 @@ static int lkcp_recv(lua_State* L){
         lua_pushstring(L, "error: kcp not args");
         return 2;
 	}
-    char buf[2000];
-    buf[0] = '\0';
-    int32_t hr = ikcp_recv(kcp, buf, 2000);
+    lua_getfield(L, LUA_REGISTRYINDEX, "kcp_lua_recv_buffer");
+    char* buf = check_buf(L, -1);
+    lua_pop(L, 1);
+
+    int32_t hr = ikcp_recv(kcp, buf, RECV_BUFFER_LEN);
     if (hr <= 0) {
         lua_pushinteger(L, hr);
         return 1;
@@ -352,13 +368,24 @@ static const struct luaL_Reg l_methods[] = {
 int luaopen_lkcp(lua_State* L) {
     luaL_checkversion(L);
 
-    luaL_newmetatable(L, "lkcp_methods");
+    luaL_newmetatable(L, "kcp_meta");
 
     lua_newtable(L);
     luaL_setfuncs(L, lkcp_methods, 0);
     lua_setfield(L, -2, "__index");
     lua_pushcfunction(L, kcp_gc);
     lua_setfield(L, -2, "__gc");
+
+    luaL_newmetatable(L, "recv_buffer");
+
+    lua_pushcfunction(L, recv_buffer_gc);
+    lua_setfield(L, -2, "__gc");
+
+    char* global_recv_buffer = lua_newuserdata(L, sizeof(char)*RECV_BUFFER_LEN);
+    memset(global_recv_buffer, 0, sizeof(char)*RECV_BUFFER_LEN);
+    luaL_getmetatable(L, "recv_buffer");
+    lua_setmetatable(L, -2);
+    lua_setfield(L, LUA_REGISTRYINDEX, "kcp_lua_recv_buffer");
 
     luaL_newlib(L, l_methods);
 

@@ -71,8 +71,16 @@ local function test(mode)
     local ts1 = getms()
 
     while 1 do
-        LUtil.isleep(1)
         current = getms()
+
+        local nextt1 = kcp1:lkcp_check(current) 
+        local nextt2 = kcp2:lkcp_check(current)
+        local nextt = math.min(nextt1, nextt2)
+        local diff = nextt - current
+        if diff > 0 then
+            LUtil.isleep(diff)
+            current = getms()
+        end
         
         kcp1:lkcp_update(current)
         kcp2:lkcp_update(current)
@@ -82,6 +90,7 @@ local function test(mode)
             local s1 = LUtil.uint322netbytes(index)
             local s2 = LUtil.uint322netbytes(current)
             kcp1:lkcp_send(s1..s2)
+            --kcp1:lkcp_flush()
             slap = slap + 20
             index = index + 1
         end
@@ -113,6 +122,7 @@ local function test(mode)
                 break
             end
             kcp2:lkcp_send(hr)
+            --kcp2:lkcp_flush()
         end
 
 		--kcp1收到kcp2的回射数据
