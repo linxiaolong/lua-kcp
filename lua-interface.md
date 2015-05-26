@@ -1,13 +1,12 @@
 
-LUA-INTERFACE
+# LUA-INTERFACE
 
-/*******************************************************************************/
-LKcp.lkcp_init(output)
+## LKcp.lkcp_init(output)
 
-DESCRIPTION
+### DESCRIPTION
     Init KCP layer.
 
-PARAMETERS
+### PARAMETERS
     output: a callback for KCP layer to invoke when send data to transport layer
     [
         output prototype:
@@ -18,16 +17,15 @@ PARAMETERS
         buf is to be sent
     ]
 
-RETURN
+### RETURN
     ret: always 0
 
-/*******************************************************************************/
-LKcp.lkcp_create(session, info)
+## LKcp.lkcp_create(session, info)
 
-DESCRIPTION
+### DESCRIPTION
     Create kcp object.
 
-PARAMETERS
+### PARAMETERS
     session: number mark session 
     info: extra info, when KCP layer invoke callback to send data, KCP layer would brings that to output
     [
@@ -37,109 +35,99 @@ PARAMETERS
             the form of info must be sequential, and elements must be string or integer
     ]
 
-RETURN
+### RETURN
     kcp: kcp object
 
-/*******************************************************************************/
-kcp:lkcp_wndsize(sndwnd, rcvwnd)
+## kcp:lkcp_wndsize(sndwnd, rcvwnd)
 
-DESCRIPTION
+### DESCRIPTION
     Set maximum window size: sndwnd=32, rcvwnd=32 by default
 
-PARAMETERS
+### PARAMETERS
     sndwnd: send window size
     rcvwnd: recive window size
 
-RETURN
+### RETURN
     None
 
-/*******************************************************************************/
-kcp:lkcp_nodelay(nodelay, interval, resend, nc)
+## kcp:lkcp_nodelay(nodelay, interval, resend, nc)
 
-DESCRIPTION
+### DESCRIPTION
     Config re-transmission and flow control
 
-PARAMETERS
+### PARAMETERS
     nodelay: 0:disable(default), 1:enable
     interval: internal update timer interval in millisec, default is 100ms 
     resend: 0:disable fast resend(default), 1:enable fast resend
     nc: 0:normal congestion control(default), 1:disable congestion control
 
-RETURN
+### RETURN
     ret: always 0
 
-/*******************************************************************************/
-kcp:lkcp_check(current)
+## kcp:lkcp_check(current)
 
-DESCRIPTION
+### DESCRIPTION
     Get when to invoke lkcp_update
 
-PARAMETERS
+### PARAMETERS
     current: current timestamp in millisec
 
-RETURN
+### RETURN
     when: timestamp in millisec when to invoke lkcp_update 
 
-/*******************************************************************************/
-kcp:lkcp_update(current)
+## kcp:lkcp_update(current)
 
-DESCRIPTION
+### DESCRIPTION
     Update state (call it repeatedly, every 10ms-100ms), or you can ask 
 
-PARAMETERS
+### PARAMETERS
     current: current timestamp in millisec
 
-RETURN
+### RETURN
     None
 
-/*******************************************************************************/
-kcp:lkcp_send(data)
+## kcp:lkcp_send(data)
 
-DESCRIPTION
+### DESCRIPTION
     User/upper level send
 
-PARAMETERS
+### PARAMETERS
     data: data to be sent
 
-RETURN
+### RETURN
     sent_len: below zero for error, otherwise succeed
 
-/*******************************************************************************/
-kcp:lkcp_flush()
+## kcp:lkcp_flush()
 
-DESCRIPTION
+### DESCRIPTION
     Flush pending data
 
-PARAMETERS
+### PARAMETERS
     None
 
-RETURN
+### RETURN
     None
 
-/*******************************************************************************/
-kcp:lkcp_input(data)
+## kcp:lkcp_input(data)
 
-DESCRIPTION
+### DESCRIPTION
     When you received a low level packet (eg. UDP packet), call it
 
-PARAMETERS
+### PARAMETERS
     data: data received from transport layer
 
-RETURN
+### RETURN
     ret: below zero for error, otherwise succeed 
 
-/*******************************************************************************/
-kcp:lkcp_recv()
+## kcp:lkcp_recv()
 
-DESCRIPTION
+### DESCRIPTION
     User/upper level recv 
 
-PARAMETERS
+### PARAMETERS
     None
 
-RETURN
+### RETURN
     rcv_len: Less than or equal to 0 for EAGAIN, otherwise for rcv_len 
     rcv_buf: if rcv_len greater than 0, rcv_buf is data to recv
-
-/*******************************************************************************/
 
