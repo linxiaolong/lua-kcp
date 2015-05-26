@@ -24,6 +24,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -33,10 +34,93 @@
 #define check_kcp(L, idx)\
 	*(ikcpcb**)luaL_checkudata(L, idx, "lkcp_methods")
 
+union value {
+	char* str;
+	int32_t i;
+};
+
+typedef struct _UserValue {
+    uint8_t size;
+    union value* v;
+    struct _UserValue* next;
+} UserValue;
+
 typedef struct _UserInfo {
     lua_State* lp;
-    int32_t id;
+    UserValue* lst_head;
+    UserValue* lst_tail;
 } UserInfo;
+
+UserInfo* userinfo_create(lua_State* L) {
+    UserInfo* u = malloc(sizeof(UserInfo));
+    memset(u, 0, sizeof(UserInfo));
+    u -> lp = L;
+    u -> lst_head = u -> lst_tail = NULL;
+    return u;
+}
+
+int userinfo_release(UserInfo* u) {
+    if (u == NULL)
+        return 0;
+    u -> lp = NULL;
+    if (u -> lst_head == NULL)
+        return 0;
+    UserValue* p = u -> lst_head;
+    while (p) {
+        if (p -> size > 0){
+            if (p -> v -> str){
+                free(p -> v -> str);
+                p -> v -> str = NULL;
+            }
+        }
+        free(p -> v);
+        p -> v = NULL;
+
+        UserValue* p2 = p -> next;
+        free(p);
+        p = p2;
+    }
+    u -> lst_head = NULL;
+    u -> lst_tail = NULL;
+    return 0;
+}
+
+int userinfo_add_i(UserInfo* u, int32_t i){
+    UserValue* uv = malloc(sizeof(UserValue));
+    memset(uv, 0, sizeof(UserValue));
+    uv -> size = 0;
+
+    uv -> v = malloc(sizeof(union value));
+    memset(uv -> v, 0, sizeof(union value));
+    uv -> v -> i = i;
+    uv -> next = NULL;
+    if (u -> lst_head == NULL || u -> lst_tail == NULL) {
+        u -> lst_head = u -> lst_tail = uv;
+        return 0;
+    }
+    u -> lst_tail -> next = uv;
+    u -> lst_tail = uv;
+    return 0;
+}
+
+int userinfo_add_str(UserInfo* u, const char* s, uint8_t size){
+    UserValue* uv = malloc(sizeof(UserValue));
+    memset(uv, 0, sizeof(UserValue));
+    uv -> size = size;
+
+    uv -> v = malloc(sizeof(union value));
+    memset(uv -> v, 0, sizeof(union value));
+    uv -> v -> str = malloc(sizeof(char) * size);
+    memcpy(uv -> v -> str, s, size);
+    uv -> next = NULL;
+    if (u -> lst_head == NULL || u -> lst_tail == NULL) {
+        u -> lst_head = u -> lst_tail = uv;
+        return 0;
+    }
+    u -> lst_tail -> next = uv;
+    u -> lst_tail = uv;
+    return 0;
+}
 
 static int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
 {
@@ -45,10 +129,25 @@ static int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
     }
     UserInfo* uuser = (UserInfo*)user;
     lua_State* L = uuser->lp;
-    int32_t id = uuser->id;
 
 	lua_getfield(L, LUA_REGISTRYINDEX, "kcp_lua_output_callback");
-    lua_pushinteger(L, id);
+    //return lua table
+    lua_newtable(L);
+    int32_t top = lua_gettop(L);
+    int32_t key = 1;
+
+    UserValue* p = uuser -> lst_head;
+    while (p) {
+        lua_pushinteger(L, key);
+        if (p -> size > 0){
+            lua_pushlstring(L, p -> v -> str, p -> size);
+        } else {
+            lua_pushinteger(L, p -> v -> i);
+        }
+        lua_settable(L, top);
+        p = p -> next;
+        key += 1;
+    }
 	lua_pushlstring(L, buf, len);
     lua_call(L, 2, 0);
 
@@ -61,7 +160,8 @@ static int kcp_gc(lua_State* L) {
         return 0;
 	}
     if (kcp->user != NULL) {
-        free(kcp->user);
+        UserInfo* u = kcp -> user;
+        userinfo_release(u);
         kcp->user = NULL;
     }
     ikcp_release(kcp);
@@ -76,11 +176,28 @@ static int lkcp_init(lua_State* L) {
 
 static int lkcp_create(lua_State* L){
     int32_t conv = luaL_checkinteger(L, 1);
-    int32_t id = luaL_checkinteger(L, 2);
 
-    UserInfo* user = malloc(sizeof(UserInfo));
-    user->lp = L;
-    user->id = id;
+    UserInfo* user = userinfo_create(L);
+    if (user == NULL) {
+        lua_pushnil(L);
+        lua_pushstring(L, "error: fail to create userinfo");
+        return 2;
+    }
+    //loop the table
+    lua_pushnil(L);
+    while (lua_next(L, 2)) {
+        int32_t valtype = lua_type(L, -1);
+        if (valtype == LUA_TNUMBER) {
+            int32_t v = luaL_checkinteger(L, -1);
+            userinfo_add_i(user, v);
+        } else {
+            size_t size;
+            const char *s = luaL_checklstring(L, -1, &size);
+            userinfo_add_str(user, s, size);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
 
     ikcpcb* kcp = ikcp_create(conv, (void*)user);
     if (kcp == NULL) {
