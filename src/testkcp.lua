@@ -15,22 +15,36 @@ local function getms()
     return math.floor(LUtil.gettimeofday())
 end
 
-local function udp_output(info, buf)
-	print(string.format("[OUTPUT] who=%s id=%d session=0x%0x\n", info[2], info[1], info[3]))
-    local id = info[1]
-    lsm:send(id, buf)
+local function udp_output(buf, info)
+    print(info.id, info.a, info.b, info.c)
+    if info.b then
+        info.c(info.a)
+    end
+    lsm:send(info.id, buf)
 end
 
 local function test(mode)
-    --定制KCP层通往传输层的output接口
-    LKcp.lkcp_init(udp_output)
-
     --此处info用于output接口回调数据
     local session = 0x11223344
-    local info = {0, "kcp1", session}
-    local kcp1 = LKcp.lkcp_create(session, info)
-    info = {1, "kcp2", session}
-    local kcp2 = LKcp.lkcp_create(session, info)
+    local info = {
+        id = 0,
+        a = 'aaa',
+        b = false,
+    }
+    local kcp1 = LKcp.lkcp_create(session, function (buf)
+        udp_output(buf, info)
+    end)
+    local info2 = {
+        id = 1,
+        a = 'aaaaaaaaaaaaa',
+        b = true,
+        c = function (a)
+            print 'hahahah!!!'
+        end,
+    }
+    local kcp2 = LKcp.lkcp_create(session, function (buf)
+        udp_output(buf, info2)
+    end)
 
     local current = getms()
     local slap = current + 20

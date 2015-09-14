@@ -1,39 +1,14 @@
 
 # LUA-INTERFACE
 
-## LKcp.lkcp_init(output)
-
-### DESCRIPTION
-    Init KCP layer.
-
-### PARAMETERS
-    output: a callback for KCP layer to invoke when send data to transport layer
-    [
-        output prototype:
-            function output(info, buf)
-                ...
-            end
-        info is brought when invoke lkcp_create
-        buf is to be sent
-    ]
-
-### RETURN
-    ret: always 0
-
-## LKcp.lkcp_create(session, info)
+## LKcp.lkcp_create(session, func)
 
 ### DESCRIPTION
     Create kcp object.
 
 ### PARAMETERS
     session: number mark session 
-    info: extra info, when KCP layer invoke callback to send data, KCP layer would brings that to output
-    [
-        info prototype:
-            info = {1, "who", ...}
-        notice:
-            the form of info must be sequential, and elements must be string or integer
-    ]
+    func: extra closures, which KCP layer invoke callback to send data, see detail in testkcp.lua
 
 ### RETURN
     kcp: kcp object

@@ -31,7 +31,7 @@
 
 #include "ikcp.h"
 
-#define RECV_BUFFER_LEN 2000
+#define RECV_BUFFER_LEN 4*1024*1024
 
 #define check_kcp(L, idx)\
 	*(ikcpcb**)luaL_checkudata(L, idx, "kcp_meta")
@@ -39,124 +39,21 @@
 #define check_buf(L, idx)\
 	(char*)luaL_checkudata(L, idx, "recv_buffer")
 
-union value {
-	char* str;
-	int32_t i;
+struct Callback {
+    uint64_t handle;
+    lua_State* L;
 };
 
-typedef struct _UserValue {
-    uint8_t size;
-    union value* v;
-    struct _UserValue* next;
-} UserValue;
+static int kcp_output_callback(const char *buf, int len, ikcpcb *kcp, void *arg) {
+    struct Callback* c = (struct Callback*)arg;
+    lua_State* L = c -> L;
+    uint64_t handle = c -> handle;
 
-typedef struct _UserInfo {
-    lua_State* lp;
-    UserValue* lst_head;
-    UserValue* lst_tail;
-} UserInfo;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, handle);
+    lua_pushlstring(L, buf, len);
+    lua_call(L, 1, 0);
 
-static UserInfo* userinfo_create(lua_State* L) {
-    UserInfo* u = malloc(sizeof(UserInfo));
-    memset(u, 0, sizeof(UserInfo));
-    u -> lp = L;
-    u -> lst_head = u -> lst_tail = NULL;
-    return u;
-}
-
-static int userinfo_release(UserInfo* u) {
-    if (u == NULL)
-        return 0;
-    u -> lp = NULL;
-    if (u -> lst_head == NULL)
-        return 0;
-    UserValue* p = u -> lst_head;
-    while (p) {
-        if (p -> size > 0){
-            if (p -> v -> str){
-                free(p -> v -> str);
-                p -> v -> str = NULL;
-            }
-        }
-        free(p -> v);
-        p -> v = NULL;
-
-        UserValue* p2 = p -> next;
-        free(p);
-        p = p2;
-    }
-    u -> lst_head = NULL;
-    u -> lst_tail = NULL;
     return 0;
-}
-
-static int userinfo_add_i(UserInfo* u, int32_t i){
-    UserValue* uv = malloc(sizeof(UserValue));
-    memset(uv, 0, sizeof(UserValue));
-    uv -> size = 0;
-
-    uv -> v = malloc(sizeof(union value));
-    memset(uv -> v, 0, sizeof(union value));
-    uv -> v -> i = i;
-    uv -> next = NULL;
-    if (u -> lst_head == NULL || u -> lst_tail == NULL) {
-        u -> lst_head = u -> lst_tail = uv;
-        return 0;
-    }
-    u -> lst_tail -> next = uv;
-    u -> lst_tail = uv;
-    return 0;
-}
-
-static int userinfo_add_str(UserInfo* u, const char* s, uint8_t size){
-    UserValue* uv = malloc(sizeof(UserValue));
-    memset(uv, 0, sizeof(UserValue));
-    uv -> size = size;
-
-    uv -> v = malloc(sizeof(union value));
-    memset(uv -> v, 0, sizeof(union value));
-    uv -> v -> str = malloc(sizeof(char) * size);
-    memcpy(uv -> v -> str, s, size);
-    uv -> next = NULL;
-    if (u -> lst_head == NULL || u -> lst_tail == NULL) {
-        u -> lst_head = u -> lst_tail = uv;
-        return 0;
-    }
-    u -> lst_tail -> next = uv;
-    u -> lst_tail = uv;
-    return 0;
-}
-
-static int kcp_output(const char *buf, int len, ikcpcb *kcp, void *user)
-{
-    if (user == NULL){
-        return 0;
-    }
-    UserInfo* uuser = (UserInfo*)user;
-    lua_State* L = uuser->lp;
-
-	lua_getfield(L, LUA_REGISTRYINDEX, "kcp_lua_output_callback");
-    //return lua table
-    lua_newtable(L);
-    int32_t top = lua_gettop(L);
-    int32_t key = 1;
-
-    UserValue* p = uuser -> lst_head;
-    while (p) {
-        lua_pushinteger(L, key);
-        if (p -> size > 0){
-            lua_pushlstring(L, p -> v -> str, p -> size);
-        } else {
-            lua_pushinteger(L, p -> v -> i);
-        }
-        lua_settable(L, top);
-        p = p -> next;
-        key += 1;
-    }
-	lua_pushlstring(L, buf, len);
-    lua_call(L, 2, 0);
-
-	return 0;
 }
 
 static int kcp_gc(lua_State* L) {
@@ -165,8 +62,10 @@ static int kcp_gc(lua_State* L) {
         return 0;
 	}
     if (kcp->user != NULL) {
-        UserInfo* u = kcp -> user;
-        userinfo_release(u);
+        struct Callback* c = (struct Callback*)kcp -> user;
+        uint64_t handle = c -> handle;
+        luaL_unref(L, LUA_REGISTRYINDEX, handle);
+        free(c);
         kcp->user = NULL;
     }
     ikcp_release(kcp);
@@ -174,53 +73,23 @@ static int kcp_gc(lua_State* L) {
     return 0;
 }
 
-static int recv_buffer_gc(lua_State* L) {
-	char* buf = check_buf(L, 1);
-	if (buf == NULL) {
-        return 0;
-	}
-    buf = NULL;
-    return 0;
-}
-
-static int lkcp_init(lua_State* L) {
-	lua_setfield(L, LUA_REGISTRYINDEX, "kcp_lua_output_callback");
-    return 0;
-}
-
 static int lkcp_create(lua_State* L){
+    uint64_t handle = luaL_ref(L, LUA_REGISTRYINDEX);
     int32_t conv = luaL_checkinteger(L, 1);
 
-    UserInfo* user = userinfo_create(L);
-    if (user == NULL) {
-        lua_pushnil(L);
-        lua_pushstring(L, "error: fail to create userinfo");
-        return 2;
-    }
-    //loop the table
-    lua_pushnil(L);
-    while (lua_next(L, 2)) {
-        int32_t valtype = lua_type(L, -1);
-        if (valtype == LUA_TNUMBER) {
-            int32_t v = luaL_checkinteger(L, -1);
-            userinfo_add_i(user, v);
-        } else {
-            size_t size;
-            const char *s = luaL_checklstring(L, -1, &size);
-            userinfo_add_str(user, s, size);
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
+    struct Callback* c = malloc(sizeof(struct Callback));
+    memset(c, 0, sizeof(struct Callback));
+    c -> handle = handle;
+    c -> L = L;
 
-    ikcpcb* kcp = ikcp_create(conv, (void*)user);
+    ikcpcb* kcp = ikcp_create(conv, (void*)c);
     if (kcp == NULL) {
         lua_pushnil(L);
         lua_pushstring(L, "error: fail to create kcp");
         return 2;
     }
 
-    kcp->output = kcp_output;
+    kcp->output = kcp_output_callback;
 
     *(ikcpcb**)lua_newuserdata(L, sizeof(void*)) = kcp;
     luaL_getmetatable(L, "kcp_meta");
@@ -361,7 +230,6 @@ static const struct luaL_Reg lkcp_methods [] = {
 
 static const struct luaL_Reg l_methods[] = {
     { "lkcp_create" , lkcp_create },
-    { "lkcp_init" , lkcp_init },
     {NULL, NULL},
 };
 
@@ -377,9 +245,6 @@ int luaopen_lkcp(lua_State* L) {
     lua_setfield(L, -2, "__gc");
 
     luaL_newmetatable(L, "recv_buffer");
-
-    lua_pushcfunction(L, recv_buffer_gc);
-    lua_setfield(L, -2, "__gc");
 
     char* global_recv_buffer = lua_newuserdata(L, sizeof(char)*RECV_BUFFER_LEN);
     memset(global_recv_buffer, 0, sizeof(char)*RECV_BUFFER_LEN);
